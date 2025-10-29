@@ -3,13 +3,17 @@
 -- get directory of this file (runner.lua)
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
 
--- add src folder to package.path
-package.path = package.path .. ";" .. runner_dir .. "/src/?.lua;" .. runner_dir .. "/src/?/init.lua"
+-- THIS IS THE FIX:
+-- We add the root directory (where runner.lua is) to the package path.
+-- We DO NOT add /src/ anymore.
+package.path = package.path .. ";" .. runner_dir .. "/?.lua;" .. runner_dir .. "/?/init.lua"
 
 -- require Prometheus
+-- This will now correctly find ./prometheus/prometheus.lua
 local ok, Prometheus = pcall(require, "prometheus.prometheus")
 if not ok then
-    io.stderr:write("prometheus not found in ./src\n")
+    -- I updated the error message to be more helpful if it fails again
+    io.stderr:write("prometheus.prometheus not found. Did you rename /src to /prometheus?\n")
     os.exit(1)
 end
 
