@@ -1,13 +1,12 @@
--- runner.lua (project root)
+-- runner.lua
 package.path = package.path .. ";./src/?.lua;./src/?/init.lua"
 
 local ok, Prometheus = pcall(require, "prometheus.prometheus")
 if not ok then
-    io.stderr:write("prometheus not found in ./src\n")
-    os.exit(1)
+  io.stderr:write("prometheus not found in ./src\n")
+  os.exit(1)
 end
 
--- quiet logs
 Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Error
 
 local code = os.getenv("USER_CODE") or ""
