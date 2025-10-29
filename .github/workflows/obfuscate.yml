@@ -15,11 +15,8 @@ jobs:
           sudo apt-get update
           
           # Install LuaJIT, LuaRocks, and C build essentials
-          sudo apt-get install -y luajit luarocks build-essential
-          
-          # CRITICAL FIX: Install LIBBSON development files
-          # lua-mongo requires these to compile successfully.
-          sudo apt-get install -y libbson-dev
+          # CRITICAL FIX: Install ALL necessary MongoDB C driver dependencies (libbson and libmongoc dev files)
+          sudo apt-get install -y luajit luarocks build-essential libbson-dev libmongoc-dev
           
           # Install the Lua MongoDB driver rock
           sudo luarocks install lua-mongo
@@ -34,3 +31,4 @@ jobs:
         run: |
           chmod +x ./runner.lua || true
           luajit ./runner.lua
+
