@@ -1,5 +1,4 @@
 # .github/workflows/obfuscate.yml
-
 name: obfuscate-on-dispatch
 on:
   repository_dispatch:
@@ -11,11 +10,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: install luajit and luarocks
+      - name: install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y luajit luarocks
-          # Install the Lua MongoDB driver
+          
+          # Install LuaJIT, LuaRocks, and C build essentials
+          sudo apt-get install -y luajit luarocks build-essential
+          
+          # CRITICAL FIX: Install LIBBSON development files
+          # lua-mongo requires these to compile successfully.
+          sudo apt-get install -y libbson-dev
+          
+          # Install the Lua MongoDB driver rock
           sudo luarocks install lua-mongo
           
       - name: run obfuscator and write to DB
@@ -27,8 +33,4 @@ jobs:
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
           chmod +x ./runner.lua || true
-          # Note: We will rename runner.lua to a new script, like db_runner.lua,
-          # or simply update runner.lua to include the DB logic.
           luajit ./runner.lua
-          
-      # Remove the 'commit obfuscated file' step completely!
