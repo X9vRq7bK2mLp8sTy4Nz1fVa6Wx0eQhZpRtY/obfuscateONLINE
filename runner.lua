@@ -5,7 +5,7 @@
 local DB_NAME = "obfuscator_db" 
 local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- CHANGE THIS TO YOUR UNIQUE COLLECTION NAME!
 
--- 1. Setup Prometheus Dependencies (Same as before)
+-- 1. Setup Prometheus Dependencies
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
 package.path = package.path .. ";" .. runner_dir .. "/?.lua;" .. runner_dir .. "/?/init.lua"
 
@@ -38,23 +38,21 @@ if not mongo_ok then
     os.exit(1)
 end
 
--- --- FIX APPLIED HERE ---
--- The client connection must use the connect method on the mongo.client factory.
-local client, err = mongo.client:connect(mongo_uri) 
--- If 'client' is nil, the connection failed. 'err' will contain the reason.
+-- CRITICAL FIX: The lua-mongo API uses Client() constructor (capital C)
+local client, err = mongo.Client(mongo_uri)
 if not client then
-    io.stderr:write("Error: Could not connect MongoDB client: " .. tostring(err) .. "\n")
+    -- Now we can log specific connection errors captured by the driver
+    io.stderr:write("Error: Could not create/connect MongoDB client. Details: " .. tostring(err) .. "\n")
     os.exit(1)
 end
--- --- END FIX ---
 
 local db = client:get_database(DB_NAME)
 local collection = db:get_collection(COLLECTION_NAME)
 
--- Update the job document with the completed status and the obfuscated code
-local success, err = pcall(function()
+local success, update_err = pcall(function()
     collection:update_one(
-        { _id = job_id }, -- NOTE: I changed this to use '_id' as per Vercel's trigger.js
+        -- IMPORTANT: Using _id field for lookup based on Vercel trigger.js logic
+        { _id = job_id }, 
         { ['$set'] = { 
             status = "COMPLETED", 
             obfuscatedCode = out, 
@@ -63,14 +61,13 @@ local success, err = pcall(function()
     )
 end)
 
+-- Ensure client connection is closed
 client:close()
 
 if not success then
-    io.stderr:write("MongoDB Update Failed: " .. tostring(err) .. "\n")
+    io.stderr:write("MongoDB Update Failed: " .. tostring(update_err) .. "\n")
     os.exit(1)
 end
 
 io.stdout:write("Job " .. job_id .. " successfully completed and updated in MongoDB.\n")
-
--- Do NOT print 'out' here; we are writing to the DB, not stdout.
 
