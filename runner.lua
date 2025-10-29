@@ -38,18 +38,23 @@ if not mongo_ok then
     os.exit(1)
 end
 
-local client = mongo.client(mongo_uri)
+-- --- FIX APPLIED HERE ---
+-- The client connection must use the connect method on the mongo.client factory.
+local client, err = mongo.client:connect(mongo_uri) 
+-- If 'client' is nil, the connection failed. 'err' will contain the reason.
 if not client then
-    io.stderr:write("Error: Could not create MongoDB client.\n")
+    io.stderr:write("Error: Could not connect MongoDB client: " .. tostring(err) .. "\n")
     os.exit(1)
 end
+-- --- END FIX ---
 
 local db = client:get_database(DB_NAME)
 local collection = db:get_collection(COLLECTION_NAME)
 
+-- Update the job document with the completed status and the obfuscated code
 local success, err = pcall(function()
     collection:update_one(
-        { jobId = job_id },
+        { _id = job_id }, -- NOTE: I changed this to use '_id' as per Vercel's trigger.js
         { ['$set'] = { 
             status = "COMPLETED", 
             obfuscatedCode = out, 
@@ -68,3 +73,4 @@ end
 io.stdout:write("Job " .. job_id .. " successfully completed and updated in MongoDB.\n")
 
 -- Do NOT print 'out' here; we are writing to the DB, not stdout.
+
