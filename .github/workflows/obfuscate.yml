@@ -20,19 +20,18 @@ jobs:
           # Install the Lua MongoDB driver rock
           sudo luarocks install lua-mongo
           
-      - name: run obfuscator and write to DB (with Lua path setup)
+      - name: run obfuscator and write to DB (Final Path Fix)
         env:
           USER_CODE: ${{ github.event.client_payload.code || '' }}
           PROM_PRESET: ${{ github.event.client_payload.preset || 'Strong' }}
           JOB_ID: ${{ github.event.client_payload.job_id || '' }}
           MONGO_URI: ${{ secrets.MONGO_URI }}
         run: |
-          # CRITICAL PATH FIX:
-          # This command evaluates the output of `luarocks path` to set LUA_PATH 
-          # and LUA_CPATH environment variables in the current shell session.
-          # This ensures luajit can find the lua-mongo module.
-          eval $(luarocks path)
-          
           chmod +x ./runner.lua || true
-          luajit ./runner.lua
+          
+          # CRITICAL FINAL PATH FIX: 
+          # We explicitly chain the path setup and the execution using '&&'. 
+          # This guarantees that the LUA_PATH/LUA_CPATH variables are set 
+          # by 'eval $(luarocks path)' and are immediately available to 'luajit'.
+          eval $(luarocks path) && luajit ./runner.lua
 
