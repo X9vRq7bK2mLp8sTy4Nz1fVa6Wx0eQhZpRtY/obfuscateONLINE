@@ -39,7 +39,7 @@ end
 
 local client = nil
 local collection = nil
-local db_error = "Connection initialization failed."
+local db_error = "Unknown failure during client initialization."
 
 -- CRITICAL FIX START: Connect and retrieve collection in the most robust manner
 local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
@@ -47,7 +47,7 @@ local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
 if client_success and type(client_or_err) == 'table' then
     client = client_or_err
     
-    -- DEFENSE: Attempt to get the collection directly, bypassing get_connection()
+    -- DEFENSE: Attempt to get the collection directly (this is where the connection handshake fails)
     local collection_success, collection_or_err = pcall(function()
         return client:get_collection(DB_NAME, COLLECTION_NAME)
     end)
@@ -55,18 +55,19 @@ if client_success and type(client_or_err) == 'table' then
     if collection_success and type(collection_or_err) == 'table' then
         collection = collection_or_err
     else
-        -- FIX: Capture the actual connection error here
-        db_error = "Failed to retrieve collection (likely connection issue): " .. tostring(collection_or_err)
+        -- FIX: This captures the actual error string from the network failure (e.g., "Authentication failed")
+        db_error = "Collection Retrieval Error (Network/Auth Failure): " .. tostring(collection_or_err)
     end
 else
-    -- FIX: Capture the actual client creation error here
-    db_error = "Could not create MongoDB client object: " .. tostring(client_or_err)
+    -- This path means the client object itself failed to instantiate
+    db_error = "Client Object Creation Failed: " .. tostring(client_or_err)
 end
 
 -- Check if we successfully got a collection object before trying to use it
 if not collection then
     -- Clean up client defensively if it was created
     if client and type(client.close) == "function" then pcall(client.close, client) end
+    -- Print the collected, specific error here
     io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
     os.exit(1)
 end
