@@ -1,79 +1,34 @@
--- runner.lua (Updated with MongoDB logic)
+# .github/workflows/obfuscate.yml
+name: Prometheus Job Processor
+on:
+  repository_dispatch:
+    types: [prometheus-job-start] # NEW EVENT TYPE
 
--- Configuration Constants
--- Make sure this matches your unique collection name!
-local DB_NAME = "obfuscator_db" 
-local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- CHANGE THIS TO YOUR UNIQUE COLLECTION NAME!
-
--- 1. Setup Prometheus Dependencies (Same as before)
-local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
-package.path = package.path .. ";" .. runner_dir .. "/?.lua;" .. runner_dir .. "/?/init.lua"
-
-local ok, Prometheus = pcall(require, "prometheus.prometheus")
-if not ok then
-    io.stderr:write("prometheus.prometheus not found. Check folder name is 'prometheus'.\n")
-    os.exit(1)
-end
-Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Error
-
--- 2. Get Environment Variables
-local code = os.getenv("USER_CODE") or ""
-local preset = os.getenv("PROM_PRESET") or "Strong"
-local job_id = os.getenv("JOB_ID") or ""
-local mongo_uri = os.getenv("MONGO_URI") or ""
-
-if job_id == "" or mongo_uri == "" then
-    io.stderr:write("Error: Missing JOB_ID or MONGO_URI environment variables.\n")
-    os.exit(1)
-end
-
--- 3. Run Obfuscation
-local pipeline = Prometheus.Pipeline:fromConfig(Prometheus.Presets[preset] or Prometheus.Presets.Strong)
-local out = pipeline:apply(code or "")
-
--- 4. MongoDB Database Update
-local mongo_ok, mongo = pcall(require, "mongo")
-if not mongo_ok then
-    io.stderr:write("Error: Lua-Mongo driver not found. Did luarocks install fail? (Path may still be an issue)\n")
-    os.exit(1)
-end
-
--- --- CRITICAL API FIX APPLIED HERE ---
--- The 'mongo' module exports 'Client' (capital C) as the constructor.
--- We wrap this in a pcall to catch immediate connection errors.
-local client, err = pcall(function()
-    return mongo.Client(mongo_uri)
-end)
-
-if not client then
-    -- 'err' will contain the reason for the connection failure (e.g., Auth error, DNS fail)
-    io.stderr:write("Error: Could not connect/create MongoDB client. Check MONGO_URI and network rules. Reason: " .. tostring(err) .. "\n")
-    os.exit(1)
-end
--- --- END FIX ---
-
-local db = client:get_database(DB_NAME)
--- The 'get_collection' method should be available on the database object.
-local collection = db:get_collection(COLLECTION_NAME)
-
--- Update the job document with the completed status and the obfuscated code
-local success, update_err = pcall(function()
-    collection:update_one(
-        { _id = job_id }, -- Using _id to match Vercel's trigger.js
-        { ['$set'] = { 
-            status = "COMPLETED", 
-            obfuscatedCode = out, 
-            completedAt = os.time() 
-        }}
-    )
-end)
-
-client:close()
-
-if not success then
-    io.stderr:write("MongoDB Update Failed: " .. tostring(update_err) .. "\n")
-    os.exit(1)
-end
-
-io.stdout:write("Job " .. job_id .. " successfully completed and updated in MongoDB.\n")
+jobs:
+  obfuscate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          
+          # Install LuaJIT, LuaRocks, C build essentials, and MongoDB C dependencies
+          sudo apt-get install -y luajit luarocks build-essential libbson-dev libmongoc-dev
+          
+          # Install the Lua MongoDB driver rock
+          sudo luarocks install lua-mongo
+          
+      - name: Run Obfuscator and Write to DB
+        env:
+          USER_CODE: ${{ github.event.client_payload.code || '' }}
+          PROM_PRESET: ${{ github.event.client_payload.preset || 'Strong' }}
+          JOB_ID: ${{ github.event.client_payload.job_id || '' }}
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+        run: |
+          chmod +x ./runner.lua || true
+          
+          # This command ensures the Lua environment path is set correctly before execution
+          eval $(luarocks path) && luajit ./runner.lua
 
