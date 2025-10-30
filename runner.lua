@@ -39,6 +39,7 @@ end
 
 local client = nil
 local collection = nil
+local db_error = "Connection initialization failed."
 
 -- CRITICAL FIX START: Connect and retrieve collection in the most robust manner
 local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
@@ -54,17 +55,19 @@ if client_success and type(client_or_err) == 'table' then
     if collection_success and type(collection_or_err) == 'table' then
         collection = collection_or_err
     else
-        io.stderr:write("Error: Failed to retrieve collection. Details: " .. tostring(collection_or_err) .. "\n")
+        -- FIX: Capture the actual connection error here
+        db_error = "Failed to retrieve collection (likely connection issue): " .. tostring(collection_or_err)
     end
 else
-    io.stderr:write("Error: Could not create MongoDB client object. Details: " .. tostring(client_or_err) .. "\n")
+    -- FIX: Capture the actual client creation error here
+    db_error = "Could not create MongoDB client object: " .. tostring(client_or_err)
 end
 
 -- Check if we successfully got a collection object before trying to use it
 if not collection then
     -- Clean up client defensively if it was created
     if client and type(client.close) == "function" then pcall(client.close, client) end
-    io.stderr:write("Fatal: MongoDB collection is nil, cannot update job status.\n")
+    io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
     os.exit(1)
 end
 
