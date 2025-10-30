@@ -1,9 +1,8 @@
--- runner.lua (Updated with MongoDB logic)
+-- runner.lua (Updated with robust MongoDB connection logic)
 
 -- Configuration Constants
--- Make sure this matches your unique collection name!
 local DB_NAME = "obfuscator_db" 
-local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- CHANGE THIS TO YOUR UNIQUE COLLECTION NAME!
+local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- Ensure this is correct
 
 -- 1. Setup Prometheus Dependencies
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
@@ -38,16 +37,24 @@ if not mongo_ok then
     os.exit(1)
 end
 
--- CRITICAL FIX: The lua-mongo API uses Client() constructor (capital C)
+-- CRITICAL FIX START: Connect and get the connection object
 local client, err = mongo.Client(mongo_uri)
 if not client then
-    -- Now we can log specific connection errors captured by the driver
-    io.stderr:write("Error: Could not create/connect MongoDB client. Details: " .. tostring(err) .. "\n")
+    io.stderr:write("Error: Could not create MongoDB client. Details: " .. tostring(err) .. "\n")
     os.exit(1)
 end
 
-local db = client:get_database(DB_NAME)
-local collection = db:get_collection(COLLECTION_NAME)
+-- FIX: We must explicitly request a connection from the client
+local conn, conn_err = client:get_connection()
+if not conn then
+    io.stderr:write("Error: Could not establish MongoDB connection. Details: " .. tostring(conn_err) .. "\n")
+    client:close()
+    os.exit(1)
+end
+
+-- Get the collection using the connection object
+local collection = conn:get_collection(DB_NAME, COLLECTION_NAME)
+-- CRITICAL FIX END
 
 local success, update_err = pcall(function()
     collection:update_one(
