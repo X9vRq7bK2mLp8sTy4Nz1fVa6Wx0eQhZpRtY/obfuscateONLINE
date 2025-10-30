@@ -1,8 +1,8 @@
--- runner.lua (Diagnostic Mode - Will exit 0 to show logs)
+-- runner.lua (Functional - Direct Collection Access)
 
 -- Configuration Constants
-local DB_NAME = "obfuscator_db" 
-local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- Ensure this matches your Vercel API
+local DB_NAME = "obfuscator_db" -- DB is often encoded in the URI
+local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- Collection name is used here
 
 -- 1. Setup Prometheus Dependencies
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
@@ -37,67 +37,31 @@ if not mongo_ok then
     os.exit(1)
 end
 
-local client = nil
 local collection = nil
 local db_error = "Unknown failure during client initialization."
+local client = nil -- Retain client for optional close call
 
--- CRITICAL FIX: Safe function to print methods from the metatable
-local function dump_methods(obj)
-    local mt = getmetatable(obj)
-    local t = {}
-    if mt then
-        for k,v in pairs(mt) do
-            if type(v) == 'function' then
-                t[#t+1] = tostring(k)
-            end
-        end
-    else
-        return "\n(no metatable found on client object)"
-    end
-    table.sort(t)
-    return "\nAvailable Client Metatable Methods:\n- " .. table.concat(t, "\n- ")
-end
+-- CRITICAL FIX: The constructor returns the collection object directly.
+-- The URI is expected to contain the database name, and we add the collection name here.
+local collection_success, collection_or_err = pcall(function()
+    -- This specific driver version appears to return the collection handler directly.
+    return mongo.Client(mongo_uri .. "/" .. COLLECTION_NAME)
+end)
 
--- CRITICAL FIX START: Connect and retrieve collection using defensive API checks
-local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
-
--- Check for 'table' OR 'userdata' to validate the C-based client object
-if client_success and (type(client_or_err) == 'table' or type(client_or_err) == 'userdata') then
-    client = client_or_err
-    
-    local collection_success, collection_or_err = pcall(function()
-        -- Attempt 1: getDatabase -> getCollection (most common pattern)
-        if type(client.getDatabase) == "function" then
-            local db = client:getDatabase(DB_NAME)
-            return db:getCollection(COLLECTION_NAME)
-        end
-        
-        -- Attempt 2: get_database -> get_collection (snake_case pattern)
-        if type(client.get_database) == "function" then
-            local db = client:get_database(DB_NAME)
-            return db:get_collection(COLLECTION_NAME)
-        end
-
-        -- If none of the above methods exist, force a readable error
-        error("No suitable method found to retrieve collection.")
-    end)
-
-    if collection_success and type(collection_or_err) == 'table' then
-        collection = collection_or_err
-    else
-        -- If collection retrieval failed, capture the error and dump the methods
-        db_error = "API Method or Network Failure: " .. tostring(collection_or_err) .. dump_methods(client)
-    end
+if collection_success and (type(collection_or_err) == 'table' or type(collection_or_err) == 'userdata') then
+    collection = collection_or_err
+    client = collection_or_err -- Since we only have one object, use it for close if needed
 else
-    db_error = "Client Object Creation Failed: " .. tostring(client_or_err)
+    -- This will capture a hard network failure or authentication failure.
+    db_error = "Network/Auth Failure (Client/Collection): " .. tostring(collection_or_err)
 end
+
 
 -- Check if we successfully got a collection object before trying to use it
 if not collection then
-    if client and type(client.close) == "function" then pcall(client.close, client) end
-    io.stderr:write("MongoDB Collection Error (Diagnostic): " .. db_error .. "\n")
-    -- CRITICAL CHANGE: Exit 0 to ensure the full log output is visible
-    os.exit(0) 
+    -- No need to call close since we failed to connect/get collection
+    io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
+    os.exit(1)
 end
 
 -- Perform the update (using pcall for operational resilience)
@@ -113,10 +77,10 @@ local success, update_err = pcall(function()
 end)
 
 -- Ensure client connection is closed only if the method exists
+-- We use the collection object (client) to try to close the underlying connection.
 if client and type(client.close) == "function" then 
     pcall(client.close, client) 
 end
--- CRITICAL FIX END
 
 if not success then
     io.stderr:write("MongoDB Update Failed: " .. tostring(update_err) .. "\n")
