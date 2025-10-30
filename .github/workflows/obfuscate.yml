@@ -49,18 +49,22 @@ jobs:
           # We get the output directly from the step context
           OBFUSCATED_CODE: ${{ steps.run_obfuscator.outputs.result }}
         run: |
-          # --- FIX: Pipe the code directly into jq to build the payload ---
-          # This avoids shell expansion/mangling of the complex code string.
-          # 'jq -n -R' reads the entire stdin (from 'echo') as one raw string ('.')
-          PAYLOAD=$(echo "$OBFUSCATED_CODE" | jq -n -R \
-            --arg jid "$JOB_ID" \
-            '{ "jobId": $jid, "status": "COMPLETED", "obfuscatedCode": ., "error": null }')
+          # --- FINAL FIX: Use a temporary file for the large payload to avoid shell limits ---
+          # 1. Write the massive code string to a temporary file
+          echo "$OBFUSCATED_CODE" > obfuscated_code.txt
 
-          # Post the result, -f causes curl to fail on HTTP errors
+          # 2. Use 'jq --rawfile' to read the file content safely into the JSON object
+          # and write the final JSON to a second file.
+          jq -n \
+            --arg jid "$JOB_ID" \
+            --rawfile code obfuscated_code.txt \
+            '{ "jobId": $jid, "status": "COMPLETED", "obfuscatedCode": $code, "error": null }' > payload.json
+          
+          # 3. Use curl to read the data directly from the file using the '@' prefix
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $WORKER_SECRET" \
-            -d "$PAYLOAD"
+            -d @payload.json
 
       - name: Report Failure to Vercel
         # This step ONLY runs if the exit code was NOT 0
@@ -71,14 +75,16 @@ jobs:
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
           ERROR_MESSAGE: ${{ steps.run_obfuscator.outputs.error_log }}
         run: |
-          # --- FIX: Apply the same robust piping method for the error log ---
-          PAYLOAD=$(echo "$ERROR_MESSAGE" | jq -n -R \
-            --arg jid "$JOB_ID" \
-            '{ "jobId": $jid, "status": "FAILED", "obfuscatedCode": null, "error": . }')
+          # --- Apply file-based fix for error messages as well, for consistency ---
+          echo "$ERROR_MESSAGE" > error_message.txt
 
+          jq -n \
+            --arg jid "$JOB_ID" \
+            --rawfile err error_message.txt \
+            '{ "jobId": $jid, "status": "FAILED", "obfuscatedCode": null, "error": $err }' > payload.json
+            
           # Post the result, -f causes curl to fail on HTTP errors
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $WORKER_SECRET" \
-            -d "$PAYLOAD"
-
+            -d @payload.json
