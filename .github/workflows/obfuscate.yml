@@ -24,25 +24,27 @@ jobs:
         run: |
           chmod +x ./runner.lua || true
           
-          # We execute the script and capture its stdout and stderr.
-          # stderr is redirected to a file, which we will read if the script fails
-          # stdout is captured by the OUTPUT variable
-          # '|| true' at the end ensures this step 'succeeds' even if luajit fails,
-          # so we can check its exit code in the next steps.
           OUTPUT=$(luajit ./runner.lua 2> stderr.log)
           
           # Store the exit code
           echo "exit_code=$?" >> $GITHUB_ENV
 
-          # Store the stdout as a step output
-          echo "result<<EOF" >> $GITHUB_OUTPUT
+          # --- FIX: Robustly set multiline 'result' output ---
+          # 1. Generate a random, unique delimiter
+          DELIMITER_RESULT=$(openssl rand -hex 16)
+          # 2. Start the output block with that delimiter
+          echo "result<<$DELIMITER_RESULT" >> $GITHUB_OUTPUT
+          # 3. Echo the (potentially multiline) output
           echo "$OUTPUT" >> $GITHUB_OUTPUT
-          echo "EOF"
+          # 4. Close the block with the same delimiter
+          echo "$DELIMITER_RESULT" >> $GITHUB_OUTPUT
           
-          # Store the stderr as a step output
-          echo "error_log<<EOF" >> $GITHUB_OUTPUT
+          # --- FIX: Robustly set multiline 'error_log' output ---
+          DELIMITER_ERROR=$(openssl rand -hex 16)
+          echo "error_log<<$DELIMITER_ERROR" >> $GITHUB_OUTPUT
+          # Use 'cat' which is safer for file contents
           cat stderr.log >> $GITHUB_OUTPUT
-          echo "EOF"
+          echo "$DELIMITER_ERROR" >> $GITHUB_OUTPUT
 
       - name: Report Success to Vercel
         # This step only runs if the exit code from the script was 0
