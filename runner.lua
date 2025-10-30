@@ -1,8 +1,8 @@
--- runner.lua (Simplified MongoDB connection for GitHub Actions)
+-- runner.lua (Finalized MongoDB API usage for GitHub Actions)
 
 -- Configuration Constants
 local DB_NAME = "obfuscator_db" 
-local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- Ensure this is correct
+local COLLECTION_NAME = "PrometheusJobs_UXOAOD" -- Ensure this matches your Vercel API
 
 -- 1. Setup Prometheus Dependencies
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
@@ -37,30 +37,38 @@ if not mongo_ok then
     os.exit(1)
 end
 
--- CRITICAL FIX START: Connect in one robust step and retrieve the collection
-local client = mongo.Client(mongo_uri)
-local conn = nil
+local client = nil
 local collection = nil
 
-if client then
-    -- Attempt to get connection and collection in the standard way
-    local conn_success, conn_or_err = pcall(client.get_connection, client)
-    if conn_success and type(conn_or_err) == 'table' then
-        conn = conn_or_err
-        collection = conn:get_collection(DB_NAME, COLLECTION_NAME)
+-- CRITICAL FIX START: Connect and retrieve collection in the most robust manner
+local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
+
+if client_success and type(client_or_err) == 'table' then
+    client = client_or_err
+    
+    -- DEFENSE: Attempt to get the collection directly, bypassing get_connection()
+    local collection_success, collection_or_err = pcall(function()
+        return client:get_collection(DB_NAME, COLLECTION_NAME)
+    end)
+
+    if collection_success and type(collection_or_err) == 'table' then
+        collection = collection_or_err
     else
-        io.stderr:write("Error: Failed to get MongoDB connection. Details: " .. tostring(conn_or_err) .. "\n")
+        io.stderr:write("Error: Failed to retrieve collection. Details: " .. tostring(collection_or_err) .. "\n")
     end
 else
-    io.stderr:write("Error: Could not create MongoDB client (client object is nil).\n")
+    io.stderr:write("Error: Could not create MongoDB client object. Details: " .. tostring(client_or_err) .. "\n")
 end
 
 -- Check if we successfully got a collection object before trying to use it
 if not collection then
-    if client then client:close() end
+    -- Clean up client defensively if it was created
+    if client and type(client.close) == "function" then pcall(client.close, client) end
+    io.stderr:write("Fatal: MongoDB collection is nil, cannot update job status.\n")
     os.exit(1)
 end
 
+-- Perform the update (using pcall for operational resilience)
 local success, update_err = pcall(function()
     collection:update_one(
         { _id = job_id }, 
@@ -72,9 +80,9 @@ local success, update_err = pcall(function()
     )
 end)
 
--- Ensure client connection is closed only if it exists
-if client then 
-    client:close() 
+-- Ensure client connection is closed only if the method exists
+if client and type(client.close) == "function" then 
+    pcall(client.close, client) 
 end
 -- CRITICAL FIX END
 
