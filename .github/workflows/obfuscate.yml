@@ -1,13 +1,14 @@
+# .github/workflows/obfuscate.yml
 name: Prometheus Job Processor
 on:
   repository_dispatch:
-    types: [prometheus-job-start] # 🎯 SYNCHRONIZATION FIX: Matches your Vercel obf submit.js
+    types: [prometheus-job-start]
 
 jobs:
   obfuscate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions:checkout@v4
+      - uses: actions/checkout@v4
         
       - name: Install Dependencies
         run: |
@@ -17,7 +18,7 @@ jobs:
       - name: Run Obfuscator
         id: run_obfuscator
         env:
-          USER_CODE: ${{ github.event.client_payload.code || '' }} 
+          USER_CODE: ${{ github.event.client_payload.code || '' }}
           PROM_PRESET: ${{ github.event.client_payload.preset || 'Strong' }}
         run: |
           chmod +x ./runner.lua || true
@@ -39,30 +40,33 @@ jobs:
           echo "$DELIMITER_ERROR" >> $GITHUB_OUTPUT
 
       - name: Report Success to Vercel
+        # This step only runs if the exit code from the script was 0
         if: env.exit_code == 0
         env:
+          JOB_ID: ${{ github.event.client.payload.job_id }}
           VERCEL_WEBHOOK_URL: ${{ secrets.VERCEL_COMPLETE_URL }} 
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
+          # We get the output directly from the step context
           OBFUSCATED_CODE: ${{ steps.run_obfuscator.outputs.result }}
         run: |
-          # 🎯 CRITICAL JOB_ID FIX: Define JOB_ID inside 'run' to force immediate context evaluation, bypassing the broken 'env' block.
-          export JOB_ID=${{ github.event.client_payload.job_id }}
-
-          # Sanitize and export to ensure clean variables
-          export VERCEL_WEBHOOK_URL="$(printf '%s' "$VERCEL_WEBHOOK_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          export WORKER_SECRET="$(printf '%s' "$WORKER_SECRET" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          # --- DIAGNOSTIC STEP 1: Check and sanitize the URL and Secret ---
+          # Use 'tr -d' to remove any leading/trailing spaces or newlines from the secrets
+          export VERCEL_WEBHOOK_URL=$(echo "$VERCEL_WEBHOOK_URL" | tr -d '\n\r ' | tr -d '\t')
+          export WORKER_SECRET=$(echo "$WORKER_SECRET" | tr -d '\n\r ' | tr -d '\t')
           
           echo "--- DIAGNOSTIC START ---"
-          # CRITICAL CHECK: This value MUST now show the UUID from Vercel.
-          printf "JOB_ID_RECEIVED: %.50s\n" "$JOB_ID" 
+          # Print the URL for inspection (it will be scrubbed from logs, but its structure is visible)
           echo "VERCEL_URL_LENGTH: ${#VERCEL_WEBHOOK_URL}"
+          # Print the first 8 characters of the secret to confirm it's being read
           echo "WORKER_SECRET_START: ${WORKER_SECRET:0:8}"
           echo "--- DIAGNOSTIC END ---"
           
+          # --- FINAL FIX: Use a temporary file for the large payload to avoid shell limits ---
           # 1. Write the massive code string to a temporary file
           echo "$OBFUSCATED_CODE" > obfuscated_code.txt
 
           # 2. Use 'jq --rawfile' to read the file content safely into the JSON object
+          # and write the final JSON to a second file.
           jq -n \
             --arg jid "$JOB_ID" \
             --rawfile code obfuscated_code.txt \
@@ -72,21 +76,22 @@ jobs:
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $WORKER_SECRET" \
-            --data-binary @payload.json 
+            -d @payload.json
 
       - name: Report Failure to Vercel
+        # This step ONLY runs if the exit code was NOT 0
         if: env.exit_code != 0
         env:
+          JOB_ID: ${{ github.event.client.payload.job_id }}
           VERCEL_WEBHOOK_URL: ${{ secrets.VERCEL_COMPLETE_URL }}
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
           ERROR_MESSAGE: ${{ steps.run_obfuscator.outputs.error_log }}
         run: |
-          # 🎯 CRITICAL JOB_ID FIX: Define JOB_ID inside 'run' to force immediate context evaluation.
-          export JOB_ID=${{ github.event.client_payload.job_id }}
-
-          export VERCEL_WEBHOOK_URL="$(printf '%s' "$VERCEL_WEBHOOK_URL" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-          export WORKER_SECRET="$(printf '%s' "$WORKER_SECRET" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          # Sanitize the secrets here too, just in case
+          export VERCEL_WEBHOOK_URL=$(echo "$VERCEL_WEBHOOK_URL" | tr -d '\n\r ' | tr -d '\t')
+          export WORKER_SECRET=$(echo "$WORKER_SECRET" | tr -d '\n\r ' | tr -d '\t')
           
+          # --- Apply file-based fix for error messages as well, for consistency ---
           echo "$ERROR_MESSAGE" > error_message.txt
 
           jq -n \
@@ -94,7 +99,8 @@ jobs:
             --rawfile err error_message.txt \
             '{ "jobId": $jid, "status": "FAILED", "obfuscatedCode": null, "error": $err }' > payload.json
             
+          # Post the result, -f causes curl to fail on HTTP errors
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $WORKER_SECRET" \
-            --data-binary @payload.json
+            -d @payload.json
