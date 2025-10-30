@@ -13,11 +13,10 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
-          # We no longer need mongo or luarocks
           sudo apt-get install -y luajit jq
 
       - name: Run Obfuscator
-        id: run_obfuscator # Give this step an ID to reference its output
+        id: run_obfuscator
         env:
           USER_CODE: ${{ github.event.client_payload.code || '' }}
           PROM_PRESET: ${{ github.event.client_payload.preset || 'Strong' }}
@@ -26,23 +25,17 @@ jobs:
           
           OUTPUT=$(luajit ./runner.lua 2> stderr.log)
           
-          # Store the exit code
           echo "exit_code=$?" >> $GITHUB_ENV
 
           # --- FIX: Robustly set multiline 'result' output ---
-          # 1. Generate a random, unique delimiter
           DELIMITER_RESULT=$(openssl rand -hex 16)
-          # 2. Start the output block with that delimiter
           echo "result<<$DELIMITER_RESULT" >> $GITHUB_OUTPUT
-          # 3. Echo the (potentially multiline) output
           echo "$OUTPUT" >> $GITHUB_OUTPUT
-          # 4. Close the block with the same delimiter
           echo "$DELIMITER_RESULT" >> $GITHUB_OUTPUT
           
           # --- FIX: Robustly set multiline 'error_log' output ---
           DELIMITER_ERROR=$(openssl rand -hex 16)
           echo "error_log<<$DELIMITER_ERROR" >> $GITHUB_OUTPUT
-          # Use 'cat' which is safer for file contents
           cat stderr.log >> $GITHUB_OUTPUT
           echo "$DELIMITER_ERROR" >> $GITHUB_OUTPUT
 
@@ -51,18 +44,17 @@ jobs:
         if: env.exit_code == 0
         env:
           JOB_ID: ${{ github.event.client.payload.job_id }}
-          # This URL must be set in your GitHub repo secrets
           VERCEL_WEBHOOK_URL: ${{ secrets.VERCEL_COMPLETE_URL }} 
-          # This secret must also be in your GitHub repo secrets
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
-          # Get the 'result' output from the 'run_obfuscator' step
+          # We get the output directly from the step context
           OBFUSCATED_CODE: ${{ steps.run_obfuscator.outputs.result }}
         run: |
-          # Prepare JSON payload using jq
-          PAYLOAD=$(jq -n \
+          # --- FIX: Pipe the code directly into jq to build the payload ---
+          # This avoids shell expansion/mangling of the complex code string.
+          # 'jq -n -R' reads the entire stdin (from 'echo') as one raw string ('.')
+          PAYLOAD=$(echo "$OBFUSCATED_CODE" | jq -n -R \
             --arg jid "$JOB_ID" \
-            --arg code "$OBFUSCATED_CODE" \
-            '{ "jobId": $jid, "status": "COMPLETED", "obfuscatedCode": $code, "error": null }')
+            '{ "jobId": $jid, "status": "COMPLETED", "obfuscatedCode": ., "error": null }')
 
           # Post the result, -f causes curl to fail on HTTP errors
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
@@ -77,14 +69,12 @@ jobs:
           JOB_ID: ${{ github.event.client.payload.job_id }}
           VERCEL_WEBHOOK_URL: ${{ secrets.VERCEL_COMPLETE_URL }}
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
-          # Get the 'error_log' output from the 'run_obfuscator' step
           ERROR_MESSAGE: ${{ steps.run_obfuscator.outputs.error_log }}
         run: |
-          # Prepare JSON payload with the error
-          PAYLOAD=$(jq -n \
+          # --- FIX: Apply the same robust piping method for the error log ---
+          PAYLOAD=$(echo "$ERROR_MESSAGE" | jq -n -R \
             --arg jid "$JOB_ID" \
-            --arg err "$ERROR_MESSAGE" \
-            '{ "jobId": $jid, "status": "FAILED", "obfuscatedCode": null, "error": $err }')
+            '{ "jobId": $jid, "status": "FAILED", "obfuscatedCode": null, "error": . }')
 
           # Post the result, -f causes curl to fail on HTTP errors
           curl -f -X POST "$VERCEL_WEBHOOK_URL" \
