@@ -1,4 +1,4 @@
--- runner.lua (Updated with robust MongoDB connection logic)
+-- runner.lua (Simplified MongoDB connection for GitHub Actions)
 
 -- Configuration Constants
 local DB_NAME = "obfuscator_db" 
@@ -37,28 +37,32 @@ if not mongo_ok then
     os.exit(1)
 end
 
--- CRITICAL FIX START: Connect and get the connection object
-local client, err = mongo.Client(mongo_uri)
-if not client then
-    io.stderr:write("Error: Could not create MongoDB client. Details: " .. tostring(err) .. "\n")
-    os.exit(1)
+-- CRITICAL FIX START: Connect in one robust step and retrieve the collection
+local client = mongo.Client(mongo_uri)
+local conn = nil
+local collection = nil
+
+if client then
+    -- Attempt to get connection and collection in the standard way
+    local conn_success, conn_or_err = pcall(client.get_connection, client)
+    if conn_success and type(conn_or_err) == 'table' then
+        conn = conn_or_err
+        collection = conn:get_collection(DB_NAME, COLLECTION_NAME)
+    else
+        io.stderr:write("Error: Failed to get MongoDB connection. Details: " .. tostring(conn_or_err) .. "\n")
+    end
+else
+    io.stderr:write("Error: Could not create MongoDB client (client object is nil).\n")
 end
 
--- FIX: We must explicitly request a connection from the client
-local conn, conn_err = client:get_connection()
-if not conn then
-    io.stderr:write("Error: Could not establish MongoDB connection. Details: " .. tostring(conn_err) .. "\n")
-    client:close()
+-- Check if we successfully got a collection object before trying to use it
+if not collection then
+    if client then client:close() end
     os.exit(1)
 end
-
--- Get the collection using the connection object
-local collection = conn:get_collection(DB_NAME, COLLECTION_NAME)
--- CRITICAL FIX END
 
 local success, update_err = pcall(function()
     collection:update_one(
-        -- IMPORTANT: Using _id field for lookup based on Vercel trigger.js logic
         { _id = job_id }, 
         { ['$set'] = { 
             status = "COMPLETED", 
@@ -68,8 +72,11 @@ local success, update_err = pcall(function()
     )
 end)
 
--- Ensure client connection is closed
-client:close()
+-- Ensure client connection is closed only if it exists
+if client then 
+    client:close() 
+end
+-- CRITICAL FIX END
 
 if not success then
     io.stderr:write("MongoDB Update Failed: " .. tostring(update_err) .. "\n")
