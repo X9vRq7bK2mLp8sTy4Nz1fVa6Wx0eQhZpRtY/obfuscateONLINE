@@ -1,4 +1,4 @@
--- runner.lua (Final Diagnostic Check for MongoDB API)
+-- runner.lua (Finalized MongoDB API usage for GitHub Actions)
 
 -- Configuration Constants
 local DB_NAME = "obfuscator_db" 
@@ -53,10 +53,15 @@ local function dump_methods(obj)
     return "\nAvailable Client Methods:\n- " .. table.concat(t, "\n- ")
 end
 
--- CRITICAL FIX START: Connect and retrieve collection using defensive API checks
+---
+-- CRITICAL FIX START
+---
+
+-- Get client object
 local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
 
-if client_success and type(client_or_err) == 'table' then
+-- FIX: Check for 'table' OR 'userdata' to validate the C-based client object
+if client_success and (type(client_or_err) == 'table' or type(client_or_err) == 'userdata') then
     client = client_or_err
     
     local collection_success, collection_or_err = pcall(function()
@@ -84,11 +89,11 @@ if client_success and type(client_or_err) == 'table' then
     if collection_success and type(collection_or_err) == 'table' then
         collection = collection_or_err
     else
-        -- If collection retrieval failed, capture the error and dump the methods
+        -- This captures the actual error string from the network/API method failure
         db_error = "API Method or Network Failure: " .. tostring(collection_or_err) .. dump_methods(client)
     end
 else
-    -- Client creation failed (this is rare if the URI is formatted correctly)
+    -- Client creation failed (this means the URI format itself might be rejected)
     db_error = "Client Object Creation Failed: " .. tostring(client_or_err)
 end
 
@@ -96,7 +101,7 @@ end
 if not collection then
     -- Clean up client defensively if it was created
     if client and type(client.close) == "function" then pcall(client.close, client) end
-    -- Print the collected, specific error (which now includes method names!)
+    -- Print the collected, specific error here
     io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
     os.exit(1)
 end
@@ -117,7 +122,9 @@ end)
 if client and type(client.close) == "function" then 
     pcall(client.close, client) 
 end
+---
 -- CRITICAL FIX END
+---
 
 if not success then
     io.stderr:write("MongoDB Update Failed: " .. tostring(update_err) .. "\n")
