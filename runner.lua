@@ -1,8 +1,4 @@
--- runner.lua (Fixed Full Version - Direct Collection & Low-Level Update)
-
--- Configuration Constants
-local DB_NAME = "obfuscator_db"        -- DB is often encoded in the URI
-local COLLECTION_NAME = "PrometheusJobs_UXOAOD"
+-- runner.lua (Simplified - No Database)
 
 -- 1. Setup Prometheus Dependencies
 local runner_dir = debug.getinfo(1, "S").source:match("@?(.*)/runner.lua") or "."
@@ -10,7 +6,8 @@ package.path = package.path .. ";" .. runner_dir .. "/?.lua;" .. runner_dir .. "
 
 local ok, Prometheus = pcall(require, "prometheus.prometheus")
 if not ok then
-    io.stderr:write("prometheus.prometheus not found. Check folder name is 'prometheus'.\n")
+    -- Print errors to stderr so the GitHub Action can catch them
+    io.stderr:write("Fatal Error: prometheus.prometheus not found. Check folder name is 'prometheus'.")
     os.exit(1)
 end
 Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Error
@@ -18,61 +15,22 @@ Prometheus.Logger.logLevel = Prometheus.Logger.LogLevel.Error
 -- 2. Get Environment Variables
 local code = os.getenv("USER_CODE") or ""
 local preset = os.getenv("PROM_PRESET") or "Strong"
-local job_id = os.getenv("JOB_ID") or ""
-local mongo_uri = os.getenv("MONGO_URI") or ""
-
-if job_id == "" or mongo_uri == "" then
-    io.stderr:write("Error: Missing JOB_ID or MONGO_URI environment variables.\n")
-    os.exit(1)
-end
 
 -- 3. Run Obfuscation
+-- We pcall this to catch errors during the obfuscation process
 local pipeline = Prometheus.Pipeline:fromConfig(Prometheus.Presets[preset] or Prometheus.Presets.Strong)
-local out = pipeline:apply(code or "")
 
--- 4. MongoDB Database Update
-local mongo_ok, mongo = pcall(require, "mongo")
-if not mongo_ok then
-    io.stderr:write("Error: Lua-Mongo driver not found. Did luarocks install fail?\n")
+local success, result = pcall(pipeline.apply, pipeline, code or "")
+
+if not success then
+    -- If pcall fails, 'result' contains the error message
+    -- Print this to stderr so the .yml file can capture it as an error
+    io.stderr:write("Obfuscation Error: " .. tostring(result))
     os.exit(1)
 end
 
-local collection = nil
-local db_error = "Unknown failure during client initialization."
+-- 4. Print successful result to stdout
+-- The GitHub Action workflow will capture this output.
+io.stdout:write(result)
+os.exit(0)
 
--- CRITICAL: get collection directly
-local collection_success, collection_or_err = pcall(function()
-    return mongo.Client(mongo_uri .. "/" .. COLLECTION_NAME)
-end)
-
-if collection_success and (type(collection_or_err) == "table" or type(collection_or_err) == "userdata") then
-    collection = collection_or_err
-else
-    db_error = "Network/Auth Failure (Client/Collection): " .. tostring(collection_or_err)
-end
-
-if not collection then
-    io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
-    os.exit(1)
-end
-
--- 5. Low-Level Update (driver-specific)
-local ok, res = pcall(function()
-    return collection:update(
-        COLLECTION_NAME,
-        { _id = job_id },
-        { ['$set'] = {
-            status = "COMPLETED",
-            obfuscatedCode = out,
-            completedAt = os.time()
-        }},
-        { upsert = false }
-    )
-end)
-
-if not ok then
-    io.stderr:write("MongoDB Update Failed: " .. tostring(res) .. "\n")
-    os.exit(1)
-end
-
-io.stdout:write("Job " .. job_id .. " successfully completed and updated in MongoDB.\n")
