@@ -49,6 +49,18 @@ jobs:
           # We get the output directly from the step context
           OBFUSCATED_CODE: ${{ steps.run_obfuscator.outputs.result }}
         run: |
+          # --- DIAGNOSTIC STEP 1: Check and sanitize the URL and Secret ---
+          # Use 'tr -d' to remove any leading/trailing spaces or newlines from the secrets
+          export VERCEL_WEBHOOK_URL=$(echo "$VERCEL_WEBHOOK_URL" | tr -d '\n\r ' | tr -d '\t')
+          export WORKER_SECRET=$(echo "$WORKER_SECRET" | tr -d '\n\r ' | tr -d '\t')
+          
+          echo "--- DIAGNOSTIC START ---"
+          # Print the URL for inspection (it will be scrubbed from logs, but its structure is visible)
+          echo "VERCEL_URL_LENGTH: ${#VERCEL_WEBHOOK_URL}"
+          # Print the first 8 characters of the secret to confirm it's being read
+          echo "WORKER_SECRET_START: ${WORKER_SECRET:0:8}"
+          echo "--- DIAGNOSTIC END ---"
+          
           # --- FINAL FIX: Use a temporary file for the large payload to avoid shell limits ---
           # 1. Write the massive code string to a temporary file
           echo "$OBFUSCATED_CODE" > obfuscated_code.txt
@@ -75,6 +87,10 @@ jobs:
           WORKER_SECRET: ${{ secrets.WORKER_SECRET }}
           ERROR_MESSAGE: ${{ steps.run_obfuscator.outputs.error_log }}
         run: |
+          # Sanitize the secrets here too, just in case
+          export VERCEL_WEBHOOK_URL=$(echo "$VERCEL_WEBHOOK_URL" | tr -d '\n\r ' | tr -d '\t')
+          export WORKER_SECRET=$(echo "$WORKER_SECRET" | tr -d '\n\r ' | tr -d '\t')
+          
           # --- Apply file-based fix for error messages as well, for consistency ---
           echo "$ERROR_MESSAGE" > error_message.txt
 
