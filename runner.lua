@@ -1,4 +1,4 @@
--- runner.lua (Finalized MongoDB API usage for GitHub Actions)
+-- runner.lua (Final Diagnostic Check for MongoDB API)
 
 -- Configuration Constants
 local DB_NAME = "obfuscator_db" 
@@ -41,25 +41,54 @@ local client = nil
 local collection = nil
 local db_error = "Unknown failure during client initialization."
 
--- CRITICAL FIX START: Connect and retrieve collection in the most robust manner
+-- Function to print all methods/keys available on an object
+local function dump_methods(obj)
+    local t = {}
+    for k,v in pairs(getmetatable(obj) or obj) do
+        if type(v) == 'function' then
+            t[#t+1] = tostring(k)
+        end
+    end
+    table.sort(t)
+    return "\nAvailable Client Methods:\n- " .. table.concat(t, "\n- ")
+end
+
+-- CRITICAL FIX START: Connect and retrieve collection using defensive API checks
 local client_success, client_or_err = pcall(mongo.Client, mongo_uri)
 
 if client_success and type(client_or_err) == 'table' then
     client = client_or_err
     
-    -- DEFENSE: Attempt to get the collection directly (this is where the connection handshake fails)
     local collection_success, collection_or_err = pcall(function()
-        return client:get_collection(DB_NAME, COLLECTION_NAME)
+        -- Attempt 1: getDatabase -> getCollection (most common pattern)
+        if type(client.getDatabase) == "function" then
+            local db = client:getDatabase(DB_NAME)
+            return db:getCollection(COLLECTION_NAME)
+        end
+        
+        -- Attempt 2: get_database -> get_collection (snake_case pattern)
+        if type(client.get_database) == "function" then
+            local db = client:get_database(DB_NAME)
+            return db:get_collection(COLLECTION_NAME)
+        end
+
+        -- Attempt 3: direct get_collection (the failing pattern, but included for completeness)
+        if type(client.get_collection) == "function" then
+            return client:get_collection(DB_NAME, COLLECTION_NAME)
+        end
+
+        -- If none of the above methods exist, force a readable error
+        error("No suitable method found to retrieve collection.")
     end)
 
     if collection_success and type(collection_or_err) == 'table' then
         collection = collection_or_err
     else
-        -- FIX: This captures the actual error string from the network failure (e.g., "Authentication failed")
-        db_error = "Collection Retrieval Error (Network/Auth Failure): " .. tostring(collection_or_err)
+        -- If collection retrieval failed, capture the error and dump the methods
+        db_error = "API Method or Network Failure: " .. tostring(collection_or_err) .. dump_methods(client)
     end
 else
-    -- This path means the client object itself failed to instantiate
+    -- Client creation failed (this is rare if the URI is formatted correctly)
     db_error = "Client Object Creation Failed: " .. tostring(client_or_err)
 end
 
@@ -67,7 +96,7 @@ end
 if not collection then
     -- Clean up client defensively if it was created
     if client and type(client.close) == "function" then pcall(client.close, client) end
-    -- Print the collected, specific error here
+    -- Print the collected, specific error (which now includes method names!)
     io.stderr:write("Fatal: MongoDB Collection Error. Details: " .. db_error .. "\n")
     os.exit(1)
 end
