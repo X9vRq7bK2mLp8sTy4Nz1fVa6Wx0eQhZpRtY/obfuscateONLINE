@@ -7,7 +7,7 @@
 return {
     ["Minify"] = {
         -- The default LuaVersion is Lua51
-        LuaVersion = "Lua51";
+        LuaVersion = "LuaU";
         -- For minifying no VarNamePrefix is applied
         VarNamePrefix = "";
         -- Name Generator for Variables
@@ -23,7 +23,7 @@ return {
     };
     ["Weak"] = {
         -- The default LuaVersion is Lua51
-        LuaVersion = "Lua51";
+        LuaVersion = "LuaU";
         -- For minifying no VarNamePrefix is applied
         VarNamePrefix = "";
         -- Name Generator for Variables that look like this: IlI1lI1l
@@ -57,7 +57,7 @@ return {
     };
     ["Medium"] = {
         -- The default LuaVersion is Lua51
-        LuaVersion = "Lua51";
+        LuaVersion = "LuaU";
         -- For minifying no VarNamePrefix is applied
         VarNamePrefix = "";
         -- Name Generator for Variables
@@ -112,7 +112,7 @@ return {
     };
     ["Strong"] = {
         -- The default LuaVersion is Lua51
-        LuaVersion = "Lua51";
+        LuaVersion = "LuaU";
         -- For minifying no VarNamePrefix is applied
         VarNamePrefix = "";
         -- Name Generator for Variables that look like this: IlI1lI1l
