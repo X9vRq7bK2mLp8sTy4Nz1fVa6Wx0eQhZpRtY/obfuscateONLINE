@@ -32,4 +32,7 @@ return {
 	
 	SPACE = " "; -- The Whitespace to be used by the unparser
 	TAB   = "\t"; -- The Tab Whitespace to be used by the unparser for pretty printing
+
+	-- set runtime target for the tokenizer/parser/unparser
+	LuaVersion = "LuaU";
 }
